@@ -15,9 +15,9 @@ cd calendar-ics-server
     - Fill in the required environment variables in the `.env` file
 3. Build and run the server:
 ```bash
-docker-compose up --build
+docker-compose up --build -d
 ```
 4. Access your calendar:
-```bash
+```
     http://localhost:8080/calendar.ics
 ```

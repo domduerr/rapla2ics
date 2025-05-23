@@ -1,5 +1,5 @@
 # Use an official Python runtime
-FROM python:3.11-slim
+FROM python:slim
 
 # Set environment vars
 ENV PYTHONDONTWRITEBYTECODE=1
