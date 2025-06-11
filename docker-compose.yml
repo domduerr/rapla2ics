@@ -10,3 +10,4 @@ services:
       - ROUTE_PATH=${ROUTE_PATH}
     volumes:
       - ./data:/data
+    restart: always
