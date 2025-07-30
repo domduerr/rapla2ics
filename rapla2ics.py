@@ -6,11 +6,14 @@ import requests
 from bs4 import BeautifulSoup
 from ics import Calendar, Event
 from waitress import serve
+import pytz
 
 HTML_SOURCE_URL = os.environ.get("HTML_SOURCE_URL")
 HOST = os.environ.get("HOST")
 PORT = int(os.environ.get("PORT"))
 ROUTE_PATH = os.environ.get("ROUTE_PATH")
+LOCAL_TIMEZONE = os.environ.get("LOCAL_TIMEZONE")
+
 
 CACHE_DIR = "/data"
 CACHE_FILE = f"{CACHE_DIR}/calendar.ics"
@@ -36,6 +39,8 @@ def fetch_and_generate_ics(url, output_ics):
     rows = table.find_all('tr')[1:]
     calendar = Calendar()
 
+    local_tz = pytz.timezone('Europe/Berlin')
+
     for row in rows:
         cols = [td.get_text(strip=True) for td in row.find_all('td')]
         if len(cols) < 3:
@@ -52,8 +57,11 @@ def fetch_and_generate_ics(url, output_ics):
         location = cols[5] if len(cols) > 5 else ""
 
         try:
-            start_dt = datetime.strptime(start, "%d.%m.%Y %H:%M")
-            end_dt = datetime.strptime(end, "%d.%m.%Y %H:%M")
+            naive_start_dt = datetime.strptime(start, "%d.%m.%Y %H:%M")
+            naive_end_dt = datetime.strptime(end, "%d.%m.%Y %H:%M")
+
+            start_dt = local_tz.localize(naive_start_dt)
+            end_dt = local_tz.localize(naive_end_dt)
         except ValueError:
             print(f"Skipping invalid date: {title}")
             continue
