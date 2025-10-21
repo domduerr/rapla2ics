@@ -143,23 +143,23 @@ def get_external_sources_from_env():
     return sources
 
 def get_merged_calendar(local_calendar_path, external_sources, output_ics):
-    all_events = []
-    header = ""
     try:
         with open(local_calendar_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-            # Extract events from local calendar
-            events_section = content.split('BEGIN:VEVENT')
-            if len(events_section) > 1:
-                header = events_section[0]
-                for item in events_section[1:]:
-                    all_events.append('BEGIN:VEVENT' + item.split('END:VEVENT')[0] + 'END:VEVENT')
-            else: # No events in local calendar
-                header = content.replace('END:VCALENDAR', '')
+            local_cal_content = f.read()
     except Exception as e:
         print(f"Failed to read local calendar file {local_calendar_path}: {e}")
-        # Create a default header if local calendar is empty or unreadable
-        header = f"BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//ics.py//events nof all//EN\n"
+        return False
+
+    # Find the insertion point in the local calendar
+    end_vcalendar_pos = local_cal_content.rfind("END:VCALENDAR")
+    if end_vcalendar_pos == -1:
+        print(f"Invalid local calendar file: {local_calendar_path}")
+        return False
+
+    cal_start = local_cal_content[:end_vcalendar_pos]
+    cal_end = local_cal_content[end_vcalendar_pos:]
+
+    external_cal_parts = []
 
     for source in external_sources:
         url = source['url']
@@ -172,28 +172,38 @@ def get_merged_calendar(local_calendar_path, external_sources, output_ics):
             else:
                 response = requests.get(url)
             response.raise_for_status()
+            ext_cal_content = response.text
 
-            ext_content = response.text
-            # Extract events from external calendar
-            ext_events_section = ext_content.split('BEGIN:VEVENT')
-            if len(ext_events_section) > 1:
-                for item in ext_events_section[1:]:
-                    all_events.append('BEGIN:VEVENT' + item.split('END:VEVENT')[0] + 'END:VEVENT')
+            # Find the start and end of the main calendar content
+            start_marker = "BEGIN:VCALENDAR"
+            end_marker = "END:VCALENDAR"
 
-        except Exception as e:
-            print(f"Failed to fetch or parse external calendar from {url}: {e}")
-            # Continue to next source if one fails
+            start_pos = ext_cal_content.find(start_marker)
+            end_pos = ext_cal_content.rfind(end_marker)
+
+            if start_pos != -1 and end_pos != -1:
+                # Find the end of the BEGIN:VCALENDAR line to get to the content
+                content_start_pos = ext_cal_content.find('\n', start_pos) + 1
+                # Extract everything between the header and footer
+                cal_body = ext_cal_content[content_start_pos:end_pos].strip()
+                external_cal_parts.append(cal_body)
+            else:
+                print(f"Could not find VCALENDAR block in external source: {url}")
+
+
+        except requests.RequestException as e:
+            print(f"Failed to fetch external calendar from {url}: {e}")
             continue
+        except Exception as e:
+            print(f"An unexpected error occurred for source {url}: {e}")
+            continue
+
+    # Combine the local calendar with the external parts
+    merged_cal_content = cal_start + "\n".join(external_cal_parts) + "\n" + cal_end
 
     try:
         with open(output_ics, 'w', encoding='utf-8') as f:
-            f.write(header)
-            for event in all_events:
-                # Ensure event block ends with a newline
-                f.write(event.strip() + '\n')
-            if 'END:VCALENDAR' not in header:
-                 f.write('END:VCALENDAR\n')
-
+            f.write(merged_cal_content)
     except Exception as e:
         print(f"Failed to write merged calendar file to {output_ics}: {e}")
         return False
