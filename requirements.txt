@@ -4,3 +4,4 @@ beautifulsoup4
 ics
 waitress
 pytz
+caldav
