@@ -7,8 +7,6 @@ from bs4 import BeautifulSoup
 from ics import Calendar, Event
 from waitress import serve
 import pytz
-import caldav # Import der neuen Bibliothek
-from caldav.elements import dav, cdav
 from urllib.parse import unquote
 
 
@@ -84,7 +82,7 @@ def fetch_and_generate_ics(url, output_ics):
         calendar.events.add(event)
 
     with open(output_ics, 'w', encoding='utf-8') as f:
-        f.writelines(calendar)
+        f.write(calendar.serialize())
 
     print(f"Updated: {output_ics}")
     return True
@@ -111,6 +109,7 @@ def ensure_cache_updated():
     return None # No error
 
 
+
 def ensure_merged_cache_updated():
     regenerate_needed = is_cache_stale(MERGED_CACHE_FILE, CACHE_TTL_SECONDS)
 
@@ -125,6 +124,7 @@ def ensure_merged_cache_updated():
             else:
                 return "Failed to fetch and no merged cache available.", 500
     return None # No error
+
 
 
 def get_external_sources_from_env():
@@ -143,89 +143,63 @@ def get_external_sources_from_env():
     return sources
 
 def get_merged_calendar(local_calendar_path, external_sources, output_ics):
+    all_events = []
+    header = ""
     try:
         with open(local_calendar_path, 'r', encoding='utf-8') as f:
-            local_cal = Calendar(f.read())
-    except FileNotFoundError:
-        local_cal = Calendar()
+            content = f.read()
+            # Extract events from local calendar
+            events_section = content.split('BEGIN:VEVENT')
+            if len(events_section) > 1:
+                header = events_section[0]
+                for item in events_section[1:]:
+                    all_events.append('BEGIN:VEVENT' + item.split('END:VEVENT')[0] + 'END:VEVENT')
+            else: # No events in local calendar
+                header = content.replace('END:VCALENDAR', '')
+    except Exception as e:
+        print(f"Failed to read local calendar file {local_calendar_path}: {e}")
+        # Create a default header if local calendar is empty or unreadable
+        header = f"BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//ics.py//events nof all//EN\n"
 
     for source in external_sources:
-        url = source.get('url')
+        url = source['url']
         username = source.get('username')
         password = source.get('password')
 
-        if not url:
-            continue
-
-        # --- Case 1: CalDAV source (requires authentication) ---
-        if username and password:
-            print(f"Fetching from CalDAV source: {url}")
-            try:
-                client = caldav.DAVClient(url=url, username=username, password=password)
-                principal = client.principal()
-
-                calendar_to_sync = None
-                calendars = principal.calendars()
-
-                if calendars:
-                    # Normalize the target URL to handle potential trailing slashes
-                    normalized_target_url = url.strip('/')
-
-                    # Iterate through all available calendars to find the correct one by its URL.
-                    for cal in calendars:
-                        decoded_cal_url = unquote(str(cal.url)).strip('/')
-                        if decoded_cal_url == normalized_target_url:
-                            calendar_to_sync = cal
-                            print(f"SUCCESS: Found matching calendar by URL: {calendar_to_sync.name}")
-                            break  # Exit the loop once the match is found
-
-                    # Fallback if no calendar with a matching URL was found.                    if not calendar_to_sync:
-                        print(f"Could not find a calendar with the URL '{url}'. Falling back to the first available calendar.")
-                        calendar_to_sync = calendars[0]
-                        print(f"Fallback successful, using first calendar: {calendar_to_sync.name}")
-
-                if calendar_to_sync:
-                    event_list = calendar_to_sync.events()
-                    print(f"Found {len(event_list)} events in the calendar.")
-
-                    for event_vcal in event_list:
-                        external_cal = Calendar(event_vcal.data)
-                        for event in external_cal.events:
-                            local_cal.events.add(event)
-                else:
-                    print(f"Error: No calendars could be found for user {username}.")
-                    return False
-
-            except Exception as e:
-                print(f"Failed to fetch or parse CalDAV from {url}: {e}")
-                return False
-
-        # --- Case 2: Simple ICS URL (no authentication) ---
-        else:
-            print(f"Fetching from ICS URL: {url}")
-            try:
+        try:
+            if username and password:
+                response = requests.get(url, auth=(username, password))
+            else:
                 response = requests.get(url)
-                response.raise_for_status()
-                external_cal = Calendar(response.text)
-                for event in external_cal.events:
-                    local_cal.events.add(event)
-            except requests.RequestException as e:
-                print(f"Failed to fetch external ICS from {url}: {e}")
-                return False
-            except Exception as e:
-                print(f"Failed to parse external ICS from {url}: {e}")
-                return False
+            response.raise_for_status()
+
+            ext_content = response.text
+            # Extract events from external calendar
+            ext_events_section = ext_content.split('BEGIN:VEVENT')
+            if len(ext_events_section) > 1:
+                for item in ext_events_section[1:]:
+                    all_events.append('BEGIN:VEVENT' + item.split('END:VEVENT')[0] + 'END:VEVENT')
+
+        except Exception as e:
+            print(f"Failed to fetch or parse external calendar from {url}: {e}")
+            # Continue to next source if one fails
+            continue
 
     try:
         with open(output_ics, 'w', encoding='utf-8') as f:
-            f.write(local_cal.serialize())
+            f.write(header)
+            for event in all_events:
+                # Ensure event block ends with a newline
+                f.write(event.strip() + '\n')
+            if 'END:VCALENDAR' not in header:
+                 f.write('END:VCALENDAR\n')
+
     except Exception as e:
         print(f"Failed to write merged calendar file to {output_ics}: {e}")
         return False
 
-    print(f"Successfully updated: {output_ics}")
+    print(f"Merged calendar written to: {output_ics}")
     return True
-
 
 @app.route(ROUTE_PATH)
 def serve_ics():
