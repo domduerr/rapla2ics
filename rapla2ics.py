@@ -17,6 +17,7 @@ PORT = int(os.environ.get("PORT"))
 ROUTE_PATH = os.environ.get("ROUTE_PATH")
 MERGED_ROUTE_PATH = os.environ.get("MERGED_ROUTE_PATH")
 LOCAL_TIMEZONE = os.environ.get("LOCAL_TIMEZONE")
+EXTERNAL_CALENDAR_CACHE_TTL = int(os.environ.get("EXTERNAL_CALENDAR_CACHE_TTL", 15 * 60)) # 15 minutes default
 
 
 CACHE_DIR = "/data"
@@ -111,7 +112,7 @@ def ensure_cache_updated():
 
 
 def ensure_merged_cache_updated():
-    regenerate_needed = is_cache_stale(MERGED_CACHE_FILE, CACHE_TTL_SECONDS)
+    regenerate_needed = is_cache_stale(MERGED_CACHE_FILE, EXTERNAL_CALENDAR_CACHE_TTL)
 
     if regenerate_needed:
         print("Merged cache expired. Trying to regenerate merged ICS file...")
@@ -143,6 +144,7 @@ def get_external_sources_from_env():
     return sources
 
 def get_merged_calendar(local_calendar_path, external_sources, output_ics):
+    any_external_fetch_failed = False
     try:
         with open(local_calendar_path, 'r', encoding='utf-8') as f:
             local_cal_content = f.read()
@@ -193,10 +195,15 @@ def get_merged_calendar(local_calendar_path, external_sources, output_ics):
 
         except requests.RequestException as e:
             print(f"Failed to fetch external calendar from {url}: {e}")
+            any_external_fetch_failed = True
             continue
         except Exception as e:
             print(f"An unexpected error occurred for source {url}: {e}")
+            any_external_fetch_failed = True
             continue
+
+    if any_external_fetch_failed:
+        return False
 
     # Combine the local calendar with the external parts
     merged_cal_content = cal_start + "\n".join(external_cal_parts) + "\n" + cal_end
